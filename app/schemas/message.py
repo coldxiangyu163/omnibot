@@ -1,3 +1,4 @@
+"""Pydantic models for messages."""
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -13,6 +14,9 @@ class BotMessage(BaseModel):
 
 
 class BotResponse(BaseModel):
+    """Response from the agent."""
     text: str
     sources: list[str] | None = None
     session_id: str | None = None
+    tool_calls_count: int = 0
+    agent_steps: int = 0

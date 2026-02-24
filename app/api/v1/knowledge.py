@@ -1,3 +1,4 @@
+"""Knowledge base API — upload and query documents."""
 from fastapi import APIRouter, UploadFile, File
 from pypdf import PdfReader
 import io
