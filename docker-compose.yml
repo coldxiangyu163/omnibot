@@ -6,3 +6,4 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+      - ./omnibot.json:/app/omnibot.json
