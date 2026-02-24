@@ -1,3 +1,4 @@
+"""Web channel — WebSocket chat with agent support."""
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import uuid
 import json
@@ -25,6 +26,8 @@ async def websocket_chat(ws: WebSocket):
                 "type": "message",
                 "text": response.text,
                 "sources": response.sources,
+                "tool_calls_count": response.tool_calls_count,
+                "agent_steps": response.agent_steps,
             })
     except WebSocketDisconnect:
         pass

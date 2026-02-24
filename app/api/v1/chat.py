@@ -1,3 +1,4 @@
+"""Chat API — backward compatible."""
 from fastapi import APIRouter
 from app.schemas.message import BotMessage, BotResponse
 from app.core.engine import engine

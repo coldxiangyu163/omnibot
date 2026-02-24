@@ -1,10 +1,11 @@
+"""Simple RAG pipeline — registered as a built-in tool in the agent."""
 import chromadb
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.config import settings
 
 
 class RAGPipeline:
-    """Simple RAG: chunk docs -> ChromaDB -> retrieve on query."""
+    """Chunk docs → ChromaDB → retrieve on query. Used as a built-in agent tool."""
 
     COLLECTION = "knowledge"
 
