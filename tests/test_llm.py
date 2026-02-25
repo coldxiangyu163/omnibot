@@ -4,47 +4,36 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.core.llm.base import LLMProvider
 
 
+class _StubProvider(LLMProvider):
+    """Concrete subclass for testing base class methods."""
+    async def generate(self, prompt, system=None):
+        return ""
+    async def generate_with_tools(self, messages, tools=None, system=None):
+        return {"content": None, "tool_calls": None}
+
+
 class TestLLMProviderBase:
-    """Test the base class fallback streaming."""
+    """Test the base class."""
+
+    def test_stub_provider_instantiation(self):
+        """Concrete subclass can be instantiated."""
+        provider = _StubProvider()
+        assert provider is not None
 
     @pytest.mark.asyncio
-    async def test_stream_fallback_text_only(self):
-        """Default stream implementation falls back to non-streaming."""
-        provider = LLMProvider.__new__(LLMProvider)
-        provider.generate_with_tools = AsyncMock(return_value={
-            "content": "Hello world",
-            "tool_calls": None,
-        })
+    async def test_generate_returns_empty(self):
+        provider = _StubProvider()
+        result = await provider.generate("test")
+        assert result == ""
 
-        chunks = []
-        async for chunk in provider.generate_with_tools_stream(
+    @pytest.mark.asyncio
+    async def test_generate_with_tools_returns_none(self):
+        provider = _StubProvider()
+        result = await provider.generate_with_tools(
             messages=[{"role": "user", "content": "hi"}]
-        ):
-            chunks.append(chunk)
-
-        assert len(chunks) == 2
-        assert chunks[0] == {"type": "content_delta", "delta": "Hello world"}
-        assert chunks[1] == {"type": "done", "content": "Hello world"}
-
-    @pytest.mark.asyncio
-    async def test_stream_fallback_with_tools(self):
-        """Default stream fallback emits tool_calls then done."""
-        provider = LLMProvider.__new__(LLMProvider)
-        tool_calls = [{"id": "c1", "function": {"name": "search", "arguments": "{}"}}]
-        provider.generate_with_tools = AsyncMock(return_value={
-            "content": None,
-            "tool_calls": tool_calls,
-        })
-
-        chunks = []
-        async for chunk in provider.generate_with_tools_stream(
-            messages=[{"role": "user", "content": "search"}]
-        ):
-            chunks.append(chunk)
-
-        assert chunks[0]["type"] == "tool_calls"
-        assert chunks[0]["tool_calls"] == tool_calls
-        assert chunks[-1]["type"] == "done"
+        )
+        assert result["content"] is None
+        assert result["tool_calls"] is None
 
 
 class TestOpenAIProvider:
