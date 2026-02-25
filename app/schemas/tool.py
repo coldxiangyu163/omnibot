@@ -16,6 +16,7 @@ class AgentRequest(BaseModel):
     message: str
     system_prompt: str | None = None
     conversation: list[dict] | None = None
+    session_id: str | None = None
     max_iterations: int = 10
 
 
