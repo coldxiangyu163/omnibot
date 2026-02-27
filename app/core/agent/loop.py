@@ -173,3 +173,106 @@ class AgentLoop:
             total_tool_calls=total_tool_calls,
             total_duration_ms=elapsed,
         )
+
+    async def run_stream(
+        self,
+        user_message: str,
+        conversation: list[dict] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """
+        Streaming version of run(). Yields events as they happen:
+
+            {"event": "step_start", "step": 1}
+            {"event": "content_delta", "delta": "partial text..."}
+            {"event": "tool_start", "tool": "name", "arguments": {...}}
+            {"event": "tool_result", "tool": "name", "result": "...", "duration_ms": 42}
+            {"event": "done", "response": "full text", "total_tool_calls": 3, "duration_ms": 1234}
+        """
+        start = time.monotonic()
+        total_tool_calls = 0
+
+        messages = []
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        if conversation:
+            messages.extend(conversation)
+        messages.append({"role": "user", "content": user_message})
+
+        tools = self.registry.all_tools
+
+        for i in range(self.max_iterations):
+            yield {"event": "step_start", "step": i + 1}
+
+            full_content = ""
+            pending_tool_calls = None
+
+            async for chunk in self.llm.generate_with_tools_stream(
+                messages=messages, tools=tools if tools else [],
+            ):
+                if chunk["type"] == "content_delta":
+                    yield {"event": "content_delta", "delta": chunk["delta"]}
+
+                elif chunk["type"] == "tool_calls":
+                    pending_tool_calls = chunk["tool_calls"]
+
+                elif chunk["type"] == "done":
+                    full_content = chunk.get("content", "")
+
+            # If tool calls, execute them
+            if pending_tool_calls:
+                messages.append({
+                    "role": "assistant",
+                    "content": full_content or "",
+                    "tool_calls": pending_tool_calls,
+                })
+
+                for tc in pending_tool_calls:
+                    tool_name = tc["function"]["name"]
+                    try:
+                        arguments = tc["function"]["arguments"]
+                        if isinstance(arguments, str):
+                            import json
+                            arguments = json.loads(arguments)
+                    except Exception:
+                        arguments = {}
+
+                    yield {"event": "tool_start", "tool": tool_name, "arguments": arguments}
+
+                    t0 = time.monotonic()
+                    result_text = await self.registry.call(tool_name, arguments)
+                    duration = int((time.monotonic() - t0) * 1000)
+                    total_tool_calls += 1
+
+                    yield {
+                        "event": "tool_result",
+                        "tool": tool_name,
+                        "result": result_text[:500],
+                        "duration_ms": duration,
+                    }
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_text,
+                    })
+
+                continue
+
+            # No tool calls — final response
+            elapsed = int((time.monotonic() - start) * 1000)
+            yield {
+                "event": "done",
+                "response": full_content,
+                "total_tool_calls": total_tool_calls,
+                "duration_ms": elapsed,
+            }
+            return
+
+        # Max iterations
+        elapsed = int((time.monotonic() - start) * 1000)
+        yield {
+            "event": "done",
+            "response": "I've reached the maximum number of steps.",
+            "total_tool_calls": total_tool_calls,
+            "duration_ms": elapsed,
+        }
