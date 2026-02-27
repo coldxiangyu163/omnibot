@@ -13,6 +13,7 @@ async def run_agent(req: AgentRequest):
         message=req.message,
         system_prompt=req.system_prompt,
         conversation=req.conversation,
+        session_id=req.session_id,
         max_iterations=req.max_iterations,
     )
 

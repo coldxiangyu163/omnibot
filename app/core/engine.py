@@ -14,6 +14,7 @@ from app.core.llm.anthropic_provider import AnthropicProvider
 from app.core.mcp.registry import ToolRegistry
 from app.core.agent.loop import AgentLoop, AgentResult
 from app.core.rag.pipeline import RAGPipeline
+from app.core.memory.store import ConversationStore
 from app.schemas.message import BotMessage, BotResponse
 from app.config import settings
 
@@ -43,6 +44,7 @@ class AgentEngine:
         self.llm: LLMProvider = self._init_llm()
         self.registry: ToolRegistry = ToolRegistry()
         self.rag: RAGPipeline = RAGPipeline()
+        self.conversations: ConversationStore = ConversationStore()
         self.system_prompt: str = DEFAULT_SYSTEM_PROMPT
         self._initialized = False
 
@@ -91,10 +93,17 @@ class AgentEngine:
     async def chat(self, message: BotMessage) -> BotResponse:
         """
         Process a chat message through the agent loop.
-        Backward compatible with the old simple chat API.
+        Supports multi-turn conversation via session_id.
         """
         if not self._initialized:
             await self.initialize()
+
+        # Get or create session, load history
+        session_id = self.conversations.get_or_create(message.session_id)
+        history = self.conversations.get_history(session_id)
+
+        # Save user message
+        self.conversations.add_message(session_id, "user", message.text)
 
         agent = AgentLoop(
             llm=self.llm,
@@ -103,7 +112,12 @@ class AgentEngine:
             max_iterations=settings.max_agent_iterations,
         )
 
-        result: AgentResult = await agent.run(message.text)
+        result: AgentResult = await agent.run(
+            message.text, conversation=history if history else None
+        )
+
+        # Save assistant response
+        self.conversations.add_message(session_id, "assistant", result.response)
 
         # Collect sources from RAG tool calls
         sources = []
@@ -116,7 +130,7 @@ class AgentEngine:
         return BotResponse(
             text=result.response,
             sources=sources if sources else None,
-            session_id=message.session_id,
+            session_id=session_id,
             tool_calls_count=result.total_tool_calls,
             agent_steps=len(result.steps),
         )
@@ -126,14 +140,26 @@ class AgentEngine:
         message: str,
         system_prompt: str | None = None,
         conversation: list[dict] | None = None,
+        session_id: str | None = None,
         max_iterations: int | None = None,
     ) -> AgentResult:
         """
         Run the agent loop directly (for advanced usage / API).
         Returns full AgentResult with step details.
+
+        If session_id is provided, conversation history is loaded automatically
+        (the explicit `conversation` param takes precedence if both are given).
         """
         if not self._initialized:
             await self.initialize()
+
+        # Session-based history (only if no explicit conversation passed)
+        effective_conversation = conversation
+        resolved_session_id = None
+        if session_id and conversation is None:
+            resolved_session_id = self.conversations.get_or_create(session_id)
+            effective_conversation = self.conversations.get_history(resolved_session_id) or None
+            self.conversations.add_message(resolved_session_id, "user", message)
 
         agent = AgentLoop(
             llm=self.llm,
@@ -142,7 +168,13 @@ class AgentEngine:
             max_iterations=max_iterations or settings.max_agent_iterations,
         )
 
-        return await agent.run(message, conversation=conversation)
+        result = await agent.run(message, conversation=effective_conversation)
+
+        # Save assistant response to session
+        if resolved_session_id:
+            self.conversations.add_message(resolved_session_id, "assistant", result.response)
+
+        return result
 
     async def shutdown(self):
         """Clean shutdown of all MCP servers."""
