@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OmniBot — AI Agent Chat</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#0f172a; color:#e2e8f0; height:100vh; display:flex; flex-direction:column; }
+
+/* Header */
+.header { background:#1e293b; border-bottom:1px solid #334155; padding:16px 24px; display:flex; align-items:center; gap:12px; }
+.header .logo { font-size:24px; }
+.header h1 { font-size:18px; font-weight:600; color:#f8fafc; }
+.header .badge { background:#2563eb; color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; font-weight:500; }
+.header .status { margin-left:auto; display:flex; align-items:center; gap:6px; font-size:13px; color:#94a3b8; }
+.header .status .dot { width:8px; height:8px; border-radius:50%; background:#22c55e; }
+
+/* Chat area */
+.chat-container { flex:1; overflow-y:auto; padding:24px; max-width:800px; width:100%; margin:0 auto; }
+.message { margin-bottom:16px; display:flex; gap:10px; animation:fadeIn .3s ease; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+.message.user { flex-direction:row-reverse; }
+.avatar { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+.avatar.bot { background:#1e3a5f; }
+.avatar.user { background:#2563eb; }
+.bubble { max-width:70%; padding:12px 16px; border-radius:12px; font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+.message.bot .bubble { background:#1e293b; border:1px solid #334155; color:#e2e8f0; border-top-left-radius:4px; }
+.message.user .bubble { background:#2563eb; color:#fff; border-top-right-radius:4px; }
+
+/* Tool call indicator */
+.tool-call { background:#1a1a2e; border:1px solid #334155; border-radius:8px; padding:8px 12px; margin:4px 0; font-size:12px; color:#94a3b8; display:flex; align-items:center; gap:6px; }
+.tool-call .icon { color:#f59e0b; }
+.tool-call .name { color:#60a5fa; font-weight:500; }
+.tool-call .duration { margin-left:auto; color:#64748b; }
+
+/* Thinking indicator */
+.thinking { display:flex; gap:4px; padding:4px 0; }
+.thinking span { width:6px; height:6px; background:#60a5fa; border-radius:50%; animation:bounce .6s infinite alternate; }
+.thinking span:nth-child(2) { animation-delay:.2s; }
+.thinking span:nth-child(3) { animation-delay:.4s; }
+@keyframes bounce { to{opacity:.3;transform:translateY(-4px)} }
+
+/* Input area */
+.input-area { background:#1e293b; border-top:1px solid #334155; padding:16px 24px; }
+.input-row { max-width:800px; margin:0 auto; display:flex; gap:8px; }
+.input-row textarea { flex:1; background:#0f172a; border:1px solid #334155; border-radius:12px; padding:12px 16px; color:#e2e8f0; font-size:14px; font-family:inherit; resize:none; outline:none; min-height:48px; max-height:120px; transition:border-color .2s; }
+.input-row textarea:focus { border-color:#2563eb; }
+.input-row textarea::placeholder { color:#64748b; }
+.send-btn { background:#2563eb; color:#fff; border:none; border-radius:12px; padding:0 20px; cursor:pointer; font-size:16px; transition:background .2s; display:flex; align-items:center; }
+.send-btn:hover { background:#1d4ed8; }
+.send-btn:disabled { background:#334155; cursor:not-allowed; }
+
+/* Welcome */
+.welcome { text-align:center; padding:60px 20px; }
+.welcome h2 { font-size:28px; margin-bottom:8px; color:#f8fafc; }
+.welcome p { color:#94a3b8; font-size:15px; margin-bottom:24px; }
+.welcome .chips { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; }
+.welcome .chip { background:#1e293b; border:1px solid #334155; border-radius:20px; padding:8px 16px; font-size:13px; color:#94a3b8; cursor:pointer; transition:all .2s; }
+.welcome .chip:hover { border-color:#2563eb; color:#60a5fa; }
+
+/* Scrollbar */
+.chat-container::-webkit-scrollbar { width:6px; }
+.chat-container::-webkit-scrollbar-track { background:transparent; }
+.chat-container::-webkit-scrollbar-thumb { background:#334155; border-radius:3px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="logo">🤖</span>
+  <h1>OmniBot</h1>
+  <span class="badge">v0.2.0</span>
+  <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">Connected</span></div>
+</div>
+
+<div class="chat-container" id="chatContainer">
+  <div class="welcome" id="welcome">
+    <h2>👋 Welcome to OmniBot</h2>
+    <p>MCP-native AI Agent Framework — ask me anything</p>
+    <div class="chips">
+      <div class="chip" onclick="sendChip(this)">What tools do you have?</div>
+      <div class="chip" onclick="sendChip(this)">Search the web for latest AI news</div>
+      <div class="chip" onclick="sendChip(this)">Help me write a Python script</div>
+      <div class="chip" onclick="sendChip(this)">Explain MCP protocol</div>
+    </div>
+  </div>
+</div>
+
+<div class="input-area">
+  <div class="input-row">
+    <textarea id="msgInput" placeholder="Type a message... (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()">&#9654;</button>
+  </div>
+</div>
+
+<script>
+const chatContainer = document.getElementById('chatContainer');
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+const welcome = document.getElementById('welcome');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+let isStreaming = false;
+let currentBotBubble = null;
+let sessionId = null;
+
+// Auto-resize textarea
+msgInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+msgInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+
+function sendChip(el) { msgInput.value = el.textContent; sendMessage(); }
+
+function scrollToBottom() { chatContainer.scrollTop = chatContainer.scrollHeight; }
+
+function addMessage(text, role) {
+  if (welcome) welcome.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'message ' + role;
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar ' + role;
+  avatar.textContent = role === 'user' ? '👤' : '🤖';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.textContent = text;
+  msg.appendChild(avatar);
+  msg.appendChild(bubble);
+  chatContainer.appendChild(msg);
+  scrollToBottom();
+  return bubble;
+}
+
+function addToolCall(name, args) {
+  if (!currentBotBubble) return;
+  const container = currentBotBubble.closest('.message');
+  const tool = document.createElement('div');
+  tool.className = 'tool-call';
+  tool.innerHTML = '<span class="icon">⚒️</span><span class="name">' + name + '</span>';
+  container.insertBefore(tool, currentBotBubble);
+  scrollToBottom();
+  return tool;
+}
+
+function addThinking() {
+  if (welcome) welcome.style.display = 'none';
+  const msg = document.createElement('div');
+  msg.className = 'message bot';
+  msg.id = 'thinking';
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar bot';
+  avatar.textContent = '🤖';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = '<div class="thinking"><span></span><span></span><span></span></div>';
+  msg.appendChild(avatar);
+  msg.appendChild(bubble);
+  chatContainer.appendChild(msg);
+  scrollToBottom();
+}
+
+function removeThinking() {
+  const el = document.getElementById('thinking');
+  if (el) el.remove();
+}
+
+async function sendMessage() {
+  const text = msgInput.value.trim();
+  if (!text || isStreaming) return;
+  addMessage(text, 'user');
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  isStreaming = true;
+  sendBtn.disabled = true;
+  statusDot.style.background = '#f59e0b';
+  statusText.textContent = 'Thinking...';
+  addThinking();
+
+  try {
+    const body = { text: text, channel: 'web' };
+    if (sessionId) body.session_id = sessionId;
+    const res = await fetch('/api/v1/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    removeThinking();
+    currentBotBubble = addMessage('', 'bot');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.event === 'content_delta' || data.delta) {
+              fullText += data.delta || '';
+              currentBotBubble.textContent = fullText;
+              scrollToBottom();
+            } else if (data.event === 'tool_start') {
+              addToolCall(data.tool || 'tool', data.arguments);
+            } else if (data.event === 'tool_result') {
+              // tool finished
+            } else if (data.event === 'done') {
+              if (data.response && !fullText) {
+                currentBotBubble.textContent = data.response;
+              }
+              if (data.session_id) sessionId = data.session_id;
+            }
+          } catch(e) {}
+        } else if (line.startsWith('event: ')) {
+          // SSE event type line, data follows
+        }
+      }
+    }
+    // If no streaming content came through, try non-stream fallback
+    if (!fullText && currentBotBubble.textContent === '') {
+      currentBotBubble.textContent = 'Received empty response. Check server logs.';
+    }
+  } catch (err) {
+    removeThinking();
+    addMessage('Connection error: ' + err.message, 'bot');
+  }
+  isStreaming = false;
+  sendBtn.disabled = false;
+  currentBotBubble = null;
+  statusDot.style.background = '#22c55e';
+  statusText.textContent = 'Connected';
+}
+</script>
+</body>
+</html>
