@@ -9,8 +9,9 @@ class RAGPipeline:
 
     COLLECTION = "knowledge"
 
-    def __init__(self):
-        self.client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+    def __init__(self, persist_dir: str | None = None):
+        path = persist_dir or settings.chroma_persist_dir
+        self.client = chromadb.PersistentClient(path=path)
         self.collection = self.client.get_or_create_collection(self.COLLECTION)
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=800, chunk_overlap=100

@@ -1,4 +1,4 @@
-"""Web channel — WebSocket chat with agent support."""
+"""Web channel — WebSocket chat with streaming agent support."""
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import uuid
 import json
@@ -21,13 +21,31 @@ async def websocket_chat(ws: WebSocket):
                 channel="web", text=payload.get("text", ""),
                 session_id=session_id,
             )
-            response = await engine.chat(msg)
-            await ws.send_json({
-                "type": "message",
-                "text": response.text,
-                "sources": response.sources,
-                "tool_calls_count": response.tool_calls_count,
-                "agent_steps": response.agent_steps,
-            })
+
+            # Use streaming by default
+            async for event in engine.chat_stream(msg):
+                event_type = event.get("event", "unknown")
+                if event_type == "content_delta":
+                    await ws.send_json({"type": "delta", "delta": event["delta"]})
+                elif event_type == "tool_start":
+                    await ws.send_json({
+                        "type": "tool_start",
+                        "tool": event["tool"],
+                        "arguments": event.get("arguments", {}),
+                    })
+                elif event_type == "tool_result":
+                    await ws.send_json({
+                        "type": "tool_result",
+                        "tool": event["tool"],
+                        "result": event.get("result", ""),
+                        "duration_ms": event.get("duration_ms", 0),
+                    })
+                elif event_type == "done":
+                    await ws.send_json({
+                        "type": "message",
+                        "text": event.get("response", ""),
+                        "total_tool_calls": event.get("total_tool_calls", 0),
+                        "duration_ms": event.get("duration_ms", 0),
+                    })
     except WebSocketDisconnect:
         pass

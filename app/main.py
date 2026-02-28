@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OmniBot",
     description="MCP-native AI Agent Framework — plug any MCP server, ship an agent in minutes.",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -32,6 +32,12 @@ app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(tools.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(web_router)
+
+# Feishu channel (only if configured)
+if settings.feishu_app_id:
+    from app.channels.feishu import router as feishu_router
+    app.include_router(feishu_router)
+    logging.getLogger(__name__).info("Feishu channel enabled")
 
 try:
     app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -44,7 +50,7 @@ async def root():
     tool_count = len(engine.registry.tool_names) if engine._initialized else 0
     return {
         "name": "OmniBot",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "tagline": "MCP-native AI Agent Framework",
         "status": "running",
         "tools_loaded": tool_count,

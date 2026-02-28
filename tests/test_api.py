@@ -8,7 +8,7 @@ async def test_root(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "OmniBot"
-    assert data["version"] == "0.2.0"
+    assert data["version"] == "0.3.0"
     assert "tools_loaded" in data
 
 
