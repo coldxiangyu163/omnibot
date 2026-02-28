@@ -1,18 +1,13 @@
 """Tests for RAG pipeline."""
 import pytest
-import tempfile
-import os
-from unittest.mock import patch
 
 
 class TestRAGPipeline:
     @pytest.fixture
     def rag(self, tmp_path):
         """Create a RAG pipeline with a temp ChromaDB directory."""
-        with patch("app.config.settings") as mock_settings:
-            mock_settings.chroma_persist_dir = str(tmp_path / "chroma")
-            from app.core.rag.pipeline import RAGPipeline
-            return RAGPipeline()
+        from app.core.rag.pipeline import RAGPipeline
+        return RAGPipeline(persist_dir=str(tmp_path / "chroma"))
 
     @pytest.mark.asyncio
     async def test_ingest_and_retrieve(self, rag):
