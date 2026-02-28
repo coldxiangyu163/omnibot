@@ -17,6 +17,7 @@ async def chat(message: BotMessage):
 async def chat_stream(message: BotMessage):
     """
     Streaming chat endpoint. Returns Server-Sent Events (SSE).
+    Conversation memory is automatically managed via session_id.
 
     Event types:
         step_start    — {"step": 1}
@@ -26,20 +27,7 @@ async def chat_stream(message: BotMessage):
         done          — {"response": "full text", "total_tool_calls": N}
     """
     async def event_generator():
-        if not engine._initialized:
-            await engine.initialize()
-
-        from app.core.agent.loop import AgentLoop
-        from app.config import settings
-
-        agent = AgentLoop(
-            llm=engine.llm,
-            registry=engine.registry,
-            system_prompt=engine.system_prompt,
-            max_iterations=settings.max_agent_iterations,
-        )
-
-        async for event in agent.run_stream(message.text):
+        async for event in engine.chat_stream(message):
             event_type = event.get("event", "unknown")
             data = json.dumps(event, ensure_ascii=False)
             yield f"event: {event_type}\ndata: {data}\n\n"

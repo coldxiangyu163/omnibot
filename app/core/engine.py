@@ -6,7 +6,7 @@ Wires together: LLM providers + MCP tool registry + Agent loop + RAG (as built-i
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, AsyncIterator
 
 from app.core.llm.base import LLMProvider
 from app.core.llm.openai_provider import OpenAIProvider
@@ -44,7 +44,7 @@ class AgentEngine:
         self.llm: LLMProvider = self._init_llm()
         self.registry: ToolRegistry = ToolRegistry()
         self.rag: RAGPipeline = RAGPipeline()
-        self.conversations: ConversationStore = ConversationStore()
+        self.conversations = self._init_memory()
         self.system_prompt: str = DEFAULT_SYSTEM_PROMPT
         self._initialized = False
 
@@ -53,10 +53,28 @@ class AgentEngine:
             return AnthropicProvider()
         return OpenAIProvider()
 
+    def _init_memory(self):
+        """Initialize conversation store based on config."""
+        if settings.memory_backend == "sqlite":
+            from app.core.memory.sqlite_store import SQLiteConversationStore
+            return SQLiteConversationStore(
+                db_path=settings.sqlite_path,
+                max_turns=settings.memory_max_turns,
+                ttl_seconds=settings.memory_ttl_seconds,
+            )
+        return ConversationStore(
+            max_turns=settings.memory_max_turns,
+            ttl_seconds=settings.memory_ttl_seconds,
+        )
+
     async def initialize(self, config_path: str = "omnibot.json"):
         """Load MCP servers and register built-in tools."""
         if self._initialized:
             return
+
+        # Initialize SQLite store if needed
+        if hasattr(self.conversations, 'initialize'):
+            await self.conversations.initialize()
 
         # Load MCP tools from config
         await self.registry.load_from_config(config_path)
@@ -90,20 +108,31 @@ class AgentEngine:
         source_str = ", ".join(sources) if sources else "unknown"
         return f"Sources: {source_str}\n\n{context}"
 
+    async def _get_history(self, session_id: str | None) -> tuple[str, list[dict]]:
+        """Get or create session + load history. Works with both sync and async stores."""
+        if hasattr(self.conversations, 'initialize'):
+            # async SQLite store
+            sid = await self.conversations.get_or_create(session_id)
+            history = await self.conversations.get_history(sid)
+        else:
+            sid = self.conversations.get_or_create(session_id)
+            history = self.conversations.get_history(sid)
+        return sid, history
+
+    async def _save_message(self, session_id: str, role: str, content: str):
+        """Save message to store. Works with both sync and async stores."""
+        if hasattr(self.conversations, 'initialize'):
+            await self.conversations.add_message(session_id, role, content)
+        else:
+            self.conversations.add_message(session_id, role, content)
+
     async def chat(self, message: BotMessage) -> BotResponse:
-        """
-        Process a chat message through the agent loop.
-        Supports multi-turn conversation via session_id.
-        """
+        """Process a chat message through the agent loop."""
         if not self._initialized:
             await self.initialize()
 
-        # Get or create session, load history
-        session_id = self.conversations.get_or_create(message.session_id)
-        history = self.conversations.get_history(session_id)
-
-        # Save user message
-        self.conversations.add_message(session_id, "user", message.text)
+        session_id, history = await self._get_history(message.session_id)
+        await self._save_message(session_id, "user", message.text)
 
         agent = AgentLoop(
             llm=self.llm,
@@ -116,10 +145,8 @@ class AgentEngine:
             message.text, conversation=history if history else None
         )
 
-        # Save assistant response
-        self.conversations.add_message(session_id, "assistant", result.response)
+        await self._save_message(session_id, "assistant", result.response)
 
-        # Collect sources from RAG tool calls
         sources = []
         for step in result.steps:
             for tc in step.tool_calls:
@@ -135,6 +162,35 @@ class AgentEngine:
             agent_steps=len(result.steps),
         )
 
+    async def chat_stream(
+        self, message: BotMessage,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streaming chat — yields SSE events, saves to memory on completion."""
+        if not self._initialized:
+            await self.initialize()
+
+        session_id, history = await self._get_history(message.session_id)
+        await self._save_message(session_id, "user", message.text)
+
+        agent = AgentLoop(
+            llm=self.llm,
+            registry=self.registry,
+            system_prompt=self.system_prompt,
+            max_iterations=settings.max_agent_iterations,
+        )
+
+        final_response = ""
+        async for event in agent.run_stream(
+            message.text, conversation=history if history else None
+        ):
+            if event.get("event", event.get("type")) == "done":
+                final_response = event.get("response", "")
+            yield event
+
+        # Save assistant response after stream completes
+        if final_response:
+            await self._save_message(session_id, "assistant", final_response)
+
     async def run_agent(
         self,
         message: str,
@@ -143,23 +199,16 @@ class AgentEngine:
         session_id: str | None = None,
         max_iterations: int | None = None,
     ) -> AgentResult:
-        """
-        Run the agent loop directly (for advanced usage / API).
-        Returns full AgentResult with step details.
-
-        If session_id is provided, conversation history is loaded automatically
-        (the explicit `conversation` param takes precedence if both are given).
-        """
+        """Run the agent loop directly (for advanced usage / API)."""
         if not self._initialized:
             await self.initialize()
 
-        # Session-based history (only if no explicit conversation passed)
         effective_conversation = conversation
         resolved_session_id = None
         if session_id and conversation is None:
-            resolved_session_id = self.conversations.get_or_create(session_id)
-            effective_conversation = self.conversations.get_history(resolved_session_id) or None
-            self.conversations.add_message(resolved_session_id, "user", message)
+            resolved_session_id, effective_conversation = await self._get_history(session_id)
+            effective_conversation = effective_conversation or None
+            await self._save_message(resolved_session_id, "user", message)
 
         agent = AgentLoop(
             llm=self.llm,
@@ -170,15 +219,16 @@ class AgentEngine:
 
         result = await agent.run(message, conversation=effective_conversation)
 
-        # Save assistant response to session
         if resolved_session_id:
-            self.conversations.add_message(resolved_session_id, "assistant", result.response)
+            await self._save_message(resolved_session_id, "assistant", result.response)
 
         return result
 
     async def shutdown(self):
         """Clean shutdown of all MCP servers."""
         await self.registry.shutdown()
+        if hasattr(self.conversations, 'close'):
+            await self.conversations.close()
         self._initialized = False
 
 

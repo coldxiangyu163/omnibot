@@ -36,10 +36,10 @@ class TestAgentEngine:
         assert resp.session_id == "s1"
 
     @pytest.mark.asyncio
-    async def test_chat_no_session_returns_none(self, engine):
+    async def test_chat_no_session_auto_creates(self, engine):
         msg = BotMessage(text="hello")
         resp = await engine.chat(msg)
-        assert resp.session_id is None
+        assert resp.session_id is not None  # auto-created
 
     @pytest.mark.asyncio
     async def test_chat_no_tool_calls(self, engine):
